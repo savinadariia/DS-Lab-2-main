@@ -23,7 +23,7 @@ import os
 # Add src directory to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
 
-from src.task2_outlier_detection import (
+from task2_outlier_detection import (
     OutlierAnalyzer,
     create_sample_dataset_with_outliers
 )

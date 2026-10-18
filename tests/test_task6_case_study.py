@@ -20,7 +20,7 @@ import json
 # Add src directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from src.task6_case_study import (
+from task6_case_study import (
     DataPreprocessor,
     create_complex_synthetic_dataset
 )

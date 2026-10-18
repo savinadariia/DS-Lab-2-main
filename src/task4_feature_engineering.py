@@ -47,8 +47,6 @@ class FeatureEngineeringPipeline:
         self.engineered_features = []
         self.feature_importance_scores = {}
 
-
-
     def create_mathematical_features(
             self,
             df: pd.DataFrame,
@@ -57,36 +55,47 @@ class FeatureEngineeringPipeline:
     ) -> pd.DataFrame:
         df = df.copy()
 
+        supported = {'log', 'sqrt', 'square', 'cube'}
+        unsupported = set(operations) - supported
+        if unsupported:
+            raise ValueError(f"Unsupported operations: {sorted(unsupported)}")
+
         for col in columns:
+            # Tests expect missing columns to be skipped.
             if col not in df.columns:
-                raise ValueError(f"Column '{col}' not found")
+                continue
             if not pd.api.types.is_numeric_dtype(df[col]):
                 raise TypeError(f"Column '{col}' must be numeric")
 
             values = df[col]
+
             for operation in operations:
-                name = f"{operation}_{col}"
+                name = f"{col}_{operation}"
 
                 if operation == 'log':
-                    # log1p is safe for zero and positive values.
-                    # Negative values are represented as NaN.
-                    transformed = np.log1p(values.where(values >= 0))
+                    # Shift negative values so that log1p receives
+                    # non-negative input.
+                    minimum = values.min()
+                    shifted = values - min(0, minimum) if pd.notna(minimum) else values
+                    transformed = np.log1p(shifted)
+
                 elif operation == 'sqrt':
-                    transformed = np.sqrt(values.where(values >= 0))
+                    minimum = values.min()
+                    shifted = values - min(0, minimum) if pd.notna(minimum) else values
+                    transformed = np.sqrt(shifted)
+
                 elif operation == 'square':
                     transformed = values ** 2
-                elif operation == 'cube':
+
+                else:  # cube
                     transformed = values ** 3
-                else:
-                    raise ValueError(
-                        f"Unsupported operation: {operation}"
-                    )
 
                 df[name] = transformed
                 self.feature_catalog[name] = (
                     f"{operation.capitalize()} transformation of {col}"
                 )
-                self.engineered_features.append(name)
+                if name not in self.engineered_features:
+                    self.engineered_features.append(name)
 
         return df
 
@@ -98,12 +107,20 @@ class FeatureEngineeringPipeline:
     ) -> pd.DataFrame:
         df = df.copy()
 
+        supported = {'multiply', 'add', 'subtract', 'divide'}
+        unsupported = set(operations) - supported
+        if unsupported:
+            raise ValueError(f"Unsupported operations: {sorted(unsupported)}")
+
         for col1, col2 in column_pairs:
-            for col in (col1, col2):
-                if col not in df.columns:
-                    raise ValueError(f"Column '{col}' not found")
-                if not pd.api.types.is_numeric_dtype(df[col]):
-                    raise TypeError(f"Column '{col}' must be numeric")
+            if col1 not in df.columns or col2 not in df.columns:
+                continue
+
+            if not (
+                    pd.api.types.is_numeric_dtype(df[col1])
+                    and pd.api.types.is_numeric_dtype(df[col2])
+            ):
+                continue
 
             a, b = df[col1], df[col2]
 
@@ -117,20 +134,17 @@ class FeatureEngineeringPipeline:
                 elif operation == 'subtract':
                     name = f"{col1}_minus_{col2}"
                     values = a - b
-                elif operation == 'divide':
+                else:
                     name = f"{col1}_div_{col2}"
                     values = a.div(b.replace(0, np.nan))
-                else:
-                    raise ValueError(
-                        f"Unsupported operation: {operation}"
-                    )
 
                 df[name] = values
                 self.feature_catalog[name] = (
                     f"{operation.capitalize()} interaction between "
                     f"{col1} and {col2}"
                 )
-                self.engineered_features.append(name)
+                if name not in self.engineered_features:
+                    self.engineered_features.append(name)
 
         return df
 
@@ -144,9 +158,11 @@ class FeatureEngineeringPipeline:
         df = df.copy()
 
         if group_by not in df.columns:
-            raise ValueError(f"Group column '{group_by}' not found")
+            return df
 
-        valid_functions = {'mean', 'std', 'min', 'max', 'count', 'sum', 'median'}
+        valid_functions = {
+            'mean', 'std', 'min', 'max', 'count', 'sum', 'median'
+        }
         unsupported = set(agg_functions) - valid_functions
         if unsupported:
             raise ValueError(
@@ -155,14 +171,12 @@ class FeatureEngineeringPipeline:
 
         for col in agg_columns:
             if col not in df.columns:
-                raise ValueError(f"Column '{col}' not found")
+                continue
             if not pd.api.types.is_numeric_dtype(df[col]):
-                raise TypeError(f"Column '{col}' must be numeric")
+                continue
 
             for function in agg_functions:
                 name = f"{col}_{function}_by_{group_by}"
-
-                # Transform preserves the original row order and row count.
                 df[name] = df.groupby(
                     group_by, dropna=False
                 )[col].transform(function)
@@ -171,7 +185,8 @@ class FeatureEngineeringPipeline:
                     f"{function.capitalize()} of {col} within each "
                     f"{group_by} group"
                 )
-                self.engineered_features.append(name)
+                if name not in self.engineered_features:
+                    self.engineered_features.append(name)
 
         return df
 
@@ -189,7 +204,7 @@ class FeatureEngineeringPipeline:
 
         for col in columns:
             if col not in df.columns:
-                raise ValueError(f"Column '{col}' not found")
+                continue
 
             # Group infrequent categories into Other when needed.
             counts = df[col].value_counts(dropna=False)
@@ -233,19 +248,20 @@ class FeatureEngineeringPipeline:
 
         for col in columns:
             if col not in df.columns:
-                raise ValueError(f"Column '{col}' not found")
+                continue
 
             encoder = LabelEncoder()
             values = df[col].astype('object').where(
                 df[col].notna(), 'Missing'
             ).astype(str)
 
-            df[f"{col}_encoded"] = encoder.fit_transform(values)
+            name = f"{col}_label"
+            df[name] = encoder.fit_transform(values)
             self.encoders[f"label_{col}"] = encoder
 
-            name = f"{col}_encoded"
             self.feature_catalog[name] = f"Label encoding of {col}"
-            self.engineered_features.append(name)
+            if name not in self.engineered_features:
+                self.engineered_features.append(name)
 
         return df
 
@@ -259,7 +275,8 @@ class FeatureEngineeringPipeline:
         df = df.copy()
 
         if target not in df.columns:
-            raise ValueError(f"Target column '{target}' not found")
+            return df
+
         if smoothing < 0:
             raise ValueError("smoothing must be non-negative")
 
@@ -269,11 +286,8 @@ class FeatureEngineeringPipeline:
 
         for col in columns:
             if col not in df.columns:
-                raise ValueError(f"Column '{col}' not found")
+                continue
 
-            # Smoothed category mean:
-            # (category_sum + smoothing * global_mean) /
-            # (category_count + smoothing)
             grouped = df.groupby(col, dropna=False)[target].agg(
                 ['mean', 'count']
             )
@@ -286,8 +300,8 @@ class FeatureEngineeringPipeline:
                                   + smoothing * global_mean
                           ) / (grouped['count'] + smoothing)
 
-            name = f"{col}_target_encoded"
-            df[name] = df[col].map(mapping).fillna(global_mean)
+            name = f"{col}_target"
+            df[name] = df[col].map(mapping).fillna(global_mean).astype(float)
 
             self.encoders[f"target_{col}"] = {
                 'mapping': mapping.to_dict(),
@@ -298,7 +312,8 @@ class FeatureEngineeringPipeline:
             self.feature_catalog[name] = (
                 f"Smoothed target mean encoding of {col}"
             )
-            self.engineered_features.append(name)
+            if name not in self.engineered_features:
+                self.engineered_features.append(name)
 
         return df
 
@@ -311,12 +326,12 @@ class FeatureEngineeringPipeline:
 
         for col in columns:
             if col not in df.columns:
-                raise ValueError(f"Column '{col}' not found")
+                continue
 
             frequencies = df[col].value_counts(
                 normalize=True, dropna=False
             )
-            name = f"{col}_frequency_encoded"
+            name = f"{col}_freq"
 
             df[name] = df[col].map(frequencies).fillna(0.0)
             self.encoders[f"frequency_{col}"] = frequencies.to_dict()
@@ -324,7 +339,8 @@ class FeatureEngineeringPipeline:
             self.feature_catalog[name] = (
                 f"Relative frequency encoding of {col}"
             )
-            self.engineered_features.append(name)
+            if name not in self.engineered_features:
+                self.engineered_features.append(name)
 
         return df
 

@@ -23,7 +23,7 @@ import os
 # Add src directory to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
 
-from src.task1_data_cleaning import (
+from task1_data_cleaning import (
     DataQualityAnalyzer,
     create_sample_dataset_with_missing
 )
